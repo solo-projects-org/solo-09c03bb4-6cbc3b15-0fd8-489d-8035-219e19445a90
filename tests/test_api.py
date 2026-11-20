@@ -14,6 +14,8 @@ from app.db import Database
 from app.main import AppState, set_state_for_tests
 from app.main import app as archive_app
 from app.collector import Collector
+from app.review.service import ReviewService
+from app.review.store import ReviewStore
 from app.source_client import SourceClient
 from source.store import SourceState
 
@@ -64,8 +66,15 @@ def source_app(source_state: SourceState):
 def archive_client(tmp_path: Path, source_app):
     db = Database(tmp_path / "api.sqlite3")
     db.init()
+    review_store = ReviewStore(tmp_path / "api.sqlite3")
+    review_store.init()
     client = SourceClient("http://source", timeout=5.0, transport=SyncASGITransport(source_app))
-    state = AppState(db=db, client=client, collector=Collector(db, client))
+    state = AppState(
+        db=db,
+        client=client,
+        collector=Collector(db, client),
+        review=ReviewService(review_store),
+    )
     set_state_for_tests(state)
     with TestClient(archive_app) as test_client:
         yield test_client
@@ -194,8 +203,15 @@ def test_restart_resumes_pending_work(
     # Simulate a restart: new Database/Collector/AppState over the same file.
     db = Database(tmp_path / "api.sqlite3")
     db.init()
+    review_store = ReviewStore(tmp_path / "api.sqlite3")
+    review_store.init()
     client = SourceClient("http://source", 5.0, transport=SyncASGITransport(source_app))
-    state = AppState(db=db, client=client, collector=Collector(db, client))
+    state = AppState(
+        db=db,
+        client=client,
+        collector=Collector(db, client),
+        review=ReviewService(review_store),
+    )
     set_state_for_tests(state)
     try:
         after = archive_client.get("/api/days/2026-11-20").json()

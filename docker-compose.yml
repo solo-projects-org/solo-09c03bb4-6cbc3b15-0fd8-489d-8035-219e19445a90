@@ -41,6 +41,9 @@ services:
       ARCHIVE_DB_PATH: /data/archive.sqlite3
       SOURCE_BASE_URL: http://source:8080
       MAX_ROUND_QUERIES: "6"
+      # Leave unset to use the real UTC clock. Set to a minute 0..1439 to pin
+      # the cross-station review replay clock for a deterministic Swagger demo.
+      REVIEW_CLOCK_MINUTE: ${REVIEW_CLOCK_MINUTE:-}
     volumes:
       - archive-data:/data
     ports:

@@ -10,6 +10,9 @@ from fastapi import FastAPI, HTTPException
 from app.collector import Collector, DayBusy, RoundResult
 from app.config import settings
 from app.db import Database
+from app.review.router import router as review_router
+from app.review.service import FixedClock, ReviewService
+from app.review.store import ReviewStore
 from app.schemas import (
     CollectRequest,
     CollectResponse,
@@ -23,18 +26,35 @@ from common.times import parse_archive_date
 
 
 class AppState:
-    def __init__(self, db: Database, client: SourceClient, collector: Collector) -> None:
+    def __init__(
+        self,
+        db: Database,
+        client: SourceClient | None,
+        collector: Collector | None,
+        review: ReviewService,
+    ) -> None:
         self.db = db
         self.client = client
         self.collector = collector
+        self.review = review
 
 
 def build_state() -> AppState:
     db = Database(settings.db_path)
     db.init()
+    review_store = ReviewStore(settings.db_path)
+    review_store.init()
     client = SourceClient(settings.source_base_url, settings.source_timeout_seconds)
     collector = Collector(db, client, settings.max_round_queries)
-    return AppState(db=db, client=client, collector=collector)
+    clock = (
+        FixedClock(settings.review_clock_minute)
+        if settings.review_clock_minute is not None
+        else None
+    )
+    review = ReviewService(review_store, clock=clock)
+    return AppState(
+        db=db, client=client, collector=collector, review=review
+    )
 
 
 def set_state_for_tests(state: AppState) -> None:
@@ -49,21 +69,26 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         state: AppState | None = getattr(app.state, "archive", None)
-        if state is not None:
+        if state is not None and state.client is not None:
             state.client.close()
 
 
 app = FastAPI(
     title="Environmental disclosure archive",
-    version="1.0.0",
+    version="1.1.0",
     description=(
         "Bounded continuation collection over a versioned disclosure source. "
         "Rounds verify the day version first, then search at most six minute "
         "intervals. Fewer than five results closes an interval; a full page "
-        "splits it; a full single minute is left for manual review."
+        "splits it; a full single minute is left for manual review. "
+        "The /api/review endpoints add cross-station verified data serving: "
+        "stations deliver whole-day JSON by submission number, minute-by-minute "
+        "consensus of at least two stations issues review numbers, and a number "
+        "stops serving data as soon as mutual support is lost."
     ),
     lifespan=lifespan,
 )
+app.include_router(review_router)
 
 
 def archive() -> AppState:
